@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeReadFile": [
+      {
+        "command": "node .cursor/hooks/block-secrets.js"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "node .cursor/hooks/block-secrets.js"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "node .cursor/hooks/block-secrets.js",
+        "matcher": "Write|Delete|StrReplace"
+      }
+    ]
+  }
+}
