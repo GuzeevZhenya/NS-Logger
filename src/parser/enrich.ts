@@ -5,7 +5,8 @@ import type {
   LogCategory,
   SpawnEvent,
 } from './types.js';
-import { CATEGORY_LABELS, eventCategory } from './types.js';
+import { CATEGORY_LABELS, eventCategory, isAdminCategory, isPlayerCategory } from './types.js';
+import { isSpawnForbidden } from './forbidden.js';
 import { localMs } from './parseSpawnLogs.js';
 import { describeTeleportPos } from './zones.js';
 
@@ -28,33 +29,37 @@ export function enrichEvents(
   catalog: ItemCatalog,
   extraForbidden: string[],
 ): EnrichedEvent[] {
-  const extra = new Set(extraForbidden);
   return events.map((ev) => {
     const category = eventCategory(ev);
-    const isSpawnItem = category === 'spawn' && ev.kind !== 'preset';
-    const info = isSpawnItem ? catalog[ev.item] : undefined;
+    const itemCats: LogCategory[] = ['spawn', 'trade', 'inventory', 'doors', 'vehicle', 'world', 'loot'];
+    const isItemRow =
+      (category === 'spawn' && ev.kind !== 'preset') ||
+      (itemCats.includes(category) && category !== 'spawn' && Boolean(ev.item) && !/^(login|disconnect)$/i.test(ev.item));
+    const info = isItemRow ? catalog[ev.item] : undefined;
     const name = info?.name || '';
-    const forbidden = Boolean(isSpawnItem && (info?.forbidden || extra.has(ev.item)));
-    const unknown = Boolean(isSpawnItem && !info);
-    let label =
-      category === 'spawn' && ev.kind !== 'preset'
-        ? formatItemLabel(ev.item, catalog)
-        : ev.item;
-    let coords: string | undefined;
+    const forbidden = Boolean(
+      category === 'spawn' && ev.kind !== 'preset' && isSpawnForbidden(ev.item, catalog, extraForbidden),
+    );
+    const unknown = Boolean(category === 'spawn' && ev.kind !== 'preset' && !info);
+    let label = isItemRow ? formatItemLabel(ev.item, catalog) : ev.item;
+    if (ev.target && (category === 'trade' || category === 'inventory' || category === 'world' || category === 'loot')) {
+      label = `${label} · ${ev.target}`;
+    }
+    let coords: string | undefined = ev.coords;
     let zoneName: string | null | undefined;
     let nearestZone: string | null | undefined;
     let nearestMeters: number | null | undefined;
     let zoneLabel: string | undefined;
-    if (category === 'teleport') {
-      const place = describeTeleportPos(ev.item);
-      if (place) {
-        coords = place.coords;
-        zoneName = place.zoneName;
-        nearestZone = place.nearest;
-        nearestMeters = place.nearestMeters;
-        zoneLabel = place.zoneLabel;
-        label = `${place.coords} · ${place.zoneLabel}`;
-      }
+    const place = describeTeleportPos(
+      category === 'teleport' ? `${ev.item} ${coords || ''}` : coords || ev.item || '',
+    );
+    if (place) {
+      coords = place.coords;
+      zoneName = place.zoneName;
+      nearestZone = place.nearest;
+      nearestMeters = place.nearestMeters;
+      zoneLabel = place.zoneLabel;
+      if (category === 'teleport') label = `${place.coords} · ${place.zoneLabel}`;
     }
     return {
       ...ev,
@@ -93,6 +98,7 @@ export function collapseBursts(events: EnrichedEvent[], windowMs = 1000): Enrich
       prev.action === ev.action &&
       prev.item === ev.item &&
       prev.target === ev.target &&
+      (prev.coords || '') === (ev.coords || '') &&
       deletedKey(prev) === deletedKey(ev) &&
       Math.abs(localMs(ev.at) - localMs(prev.at)) <= windowMs
     ) {
@@ -109,9 +115,55 @@ export function searchEvents(events: EnrichedEvent[], query: string): EnrichedEv
   if (!q) return events;
   return events.filter((ev) => {
     const hay =
-      `${ev.item} ${ev.name} ${ev.label} ${ev.nick} ${ev.target || ''} ${ev.action} ${ev.category} ${ev.zoneLabel || ''} ${ev.zoneName || ''} ${ev.nearestZone || ''}`.toLowerCase();
+      `${ev.item} ${ev.name} ${ev.label} ${ev.nick} ${ev.target || ''} ${ev.action} ${ev.category} ${ev.coords || ''} ${ev.zoneLabel || ''} ${ev.zoneName || ''} ${ev.nearestZone || ''}`.toLowerCase();
     return hay.includes(q);
   });
+}
+
+function upsertNick(map: Map<string, AdminRecord>, steamId: string, nick: string) {
+  const prev = map.get(steamId);
+  if (!prev) map.set(steamId, { steamId, nick });
+  else if (nick && nick !== prev.nick) prev.nick = nick;
+}
+
+function sortRoster(list: AdminRecord[]): AdminRecord[] {
+  return [...list].sort((a, b) => a.nick.localeCompare(b.nick, 'ru'));
+}
+
+/** Админы — только те, у кого были спавн / телепорт / статы / god / freecam / удаление. */
+export function collectAdmins(
+  events: SpawnEvent[],
+  seeded: AdminRecord[] = [],
+  groups: Array<{ steamId: string; displayName: string }> = [],
+): AdminRecord[] {
+  const byId = new Map<string, AdminRecord>();
+  for (const a of seeded) byId.set(a.steamId, { ...a });
+  for (const ev of events) {
+    if (!isAdminCategory(eventCategory(ev))) continue;
+    upsertNick(byId, ev.steamId, ev.nick);
+  }
+  const groupMap = new Map(groups.map((g) => [g.steamId, g.displayName]));
+  return sortRoster(
+    [...byId.values()].map((a) => ({
+      ...a,
+      displayName: groupMap.get(a.steamId) || a.displayName,
+    })),
+  );
+}
+
+export function collectPlayers(
+  events: SpawnEvent[],
+  adminIds?: Set<string>,
+): AdminRecord[] {
+  const byId = new Map<string, AdminRecord>();
+  for (const ev of events) {
+    if (!isPlayerCategory(eventCategory(ev))) continue;
+    upsertNick(byId, ev.steamId, ev.nick);
+  }
+  if (adminIds) {
+    for (const id of adminIds) byId.delete(id);
+  }
+  return sortRoster([...byId.values()]);
 }
 
 export function mergeAdmins(
@@ -119,23 +171,7 @@ export function mergeAdmins(
   seeded: AdminRecord[],
   groups: Array<{ steamId: string; displayName: string }>,
 ): AdminRecord[] {
-  const byId = new Map<string, AdminRecord>();
-  for (const a of seeded) byId.set(a.steamId, { ...a });
-  for (const ev of fromEvents) {
-    const prev = byId.get(ev.steamId);
-    if (!prev) {
-      byId.set(ev.steamId, { steamId: ev.steamId, nick: ev.nick });
-    } else if (ev.nick && ev.nick !== prev.nick) {
-      prev.nick = ev.nick;
-    }
-  }
-  const groupMap = new Map(groups.map((g) => [g.steamId, g.displayName]));
-  return [...byId.values()]
-    .map((a) => ({
-      ...a,
-      displayName: groupMap.get(a.steamId) || a.displayName,
-    }))
-    .sort((a, b) => a.nick.localeCompare(b.nick, 'ru'));
+  return collectAdmins(fromEvents, seeded, groups);
 }
 
 export type Stats = {

@@ -2,8 +2,12 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  mergeAdmins,
+  isPlayerDayDir,
+  collectAdmins,
+  collectPlayers,
   parseLogFile,
+  parsePlayerLogFile,
+  steamIdFromPlayerFile,
   type AdminRecord,
   type DeleteEvent,
   type ItemCatalog,
@@ -23,14 +27,38 @@ const extraForbidden = JSON.parse(
 const seeded = JSON.parse(await readFile(path.join(DATA, 'admins.json'), 'utf8').catch(() => '[]')) as AdminRecord[];
 
 const files = (await readdir(settings.logDir)).filter((f) => f.startsWith('Log_') && f.endsWith('.txt'));
-const events: SpawnEvent[] = [];
+const adminEvents: SpawnEvent[] = [];
 const deletes: DeleteEvent[] = [];
 for (const file of files) {
   const text = await readFile(path.join(settings.logDir, file), 'utf8');
   const parsed = parseLogFile(file, text, settings.utcOffsetHours);
-  events.push(...parsed.spawns);
+  adminEvents.push(...parsed.spawns);
   deletes.push(...parsed.deletes);
 }
+
+const playerEvents: SpawnEvent[] = [];
+let playerFiles = 0;
+const playerRoot = settings.playerLogDir?.trim();
+if (playerRoot) {
+  try {
+    const dirs = (await readdir(playerRoot, { withFileTypes: true }))
+      .filter((d) => d.isDirectory() && isPlayerDayDir(d.name))
+      .map((d) => d.name);
+    for (const dir of dirs) {
+      const dirPath = path.join(playerRoot, dir);
+      for (const name of await readdir(dirPath)) {
+        if (!steamIdFromPlayerFile(name)) continue;
+        const text = await readFile(path.join(dirPath, name), 'utf8');
+        playerEvents.push(...parsePlayerLogFile(name, text));
+        playerFiles += 1;
+      }
+    }
+  } catch (err) {
+    console.error('player logs skipped:', err instanceof Error ? err.message : err);
+  }
+}
+
+const events = [...adminEvents, ...playerEvents];
 events.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 deletes.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
@@ -48,7 +76,10 @@ try {
   groups = [];
 }
 
-const admins = mergeAdmins(events, seeded, groups);
+const admins = collectAdmins(adminEvents, seeded, groups);
+const adminIds = new Set(admins.map((a) => a.steamId));
+const players = collectPlayers(playerEvents, adminIds);
+await writeFile(path.join(DATA, 'admins.json'), JSON.stringify(admins, null, 2), 'utf8');
 await mkdir(path.dirname(OUT), { recursive: true });
 await writeFile(
   OUT,
@@ -56,7 +87,9 @@ await writeFile(
     generatedAt: new Date().toISOString(),
     utcOffsetHours: settings.utcOffsetHours,
     logDir: settings.logDir,
+    playerLogDir: settings.playerLogDir || '',
     admins,
+    players,
     catalog,
     extraForbidden,
     events,
@@ -64,4 +97,6 @@ await writeFile(
   }),
   'utf8',
 );
-console.error(`snapshot events=${events.length} deletes=${deletes.length} admins=${admins.length} -> ${OUT}`);
+console.error(
+  `snapshot events=${events.length} (admin=${adminEvents.length} player=${playerEvents.length} files=${playerFiles}) deletes=${deletes.length} admins=${admins.length} players=${players.length} -> ${OUT}`,
+);
