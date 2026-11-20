@@ -8,16 +8,21 @@ import {
   collapseBursts,
   enrichEvents,
   filterEvents,
-  mergeAdmins,
+  collectAdmins,
+  collectPlayers,
   attachDeletes,
+  isPlayerDayDir,
   parseLogFile,
+  parsePlayerLogFile,
   searchEvents,
+  steamIdFromPlayerFile,
   toDiscordLines,
   type AdminRecord,
   type DeleteEvent,
   type EnrichedEvent,
   type ItemCatalog,
   type Settings,
+  type Audience,
   type LogCategory,
   type SpawnEvent,
   type SpawnKind,
@@ -36,6 +41,9 @@ export type Query = {
   forbiddenOnly?: boolean;
   collapse?: boolean;
   categories?: LogCategory[];
+  audience?: Audience;
+  page?: number;
+  pageSize?: number;
 };
 
 function today(): string {
@@ -72,6 +80,7 @@ export class Store {
   extraForbidden: string[] = [];
   seededAdmins: AdminRecord[] = [];
   admins: AdminRecord[] = [];
+  players: AdminRecord[] = [];
   events: SpawnEvent[] = [];
   deletes: DeleteEvent[] = [];
   lastError = '';
@@ -90,27 +99,67 @@ export class Store {
     return this.reindex();
   }
 
+  private async loadPlayerEvents(): Promise<{ events: SpawnEvent[]; files: number }> {
+    const root = this.settings.playerLogDir?.trim();
+    if (!root) return { events: [], files: 0 };
+    const events: SpawnEvent[] = [];
+    let files = 0;
+    let dirs: string[] = [];
+    try {
+      dirs = (await readdir(root, { withFileTypes: true }))
+        .filter((d) => d.isDirectory() && isPlayerDayDir(d.name))
+        .map((d) => d.name);
+    } catch {
+      return { events: [], files: 0 };
+    }
+    for (const dir of dirs) {
+      const dirPath = path.join(root, dir);
+      let names: string[] = [];
+      try {
+        names = await readdir(dirPath);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!steamIdFromPlayerFile(name)) continue;
+        const text = await readFile(path.join(dirPath, name), 'utf8');
+        events.push(...parsePlayerLogFile(name, text));
+        files += 1;
+      }
+    }
+    return { events, files };
+  }
+
   async reindex() {
     this.lastError = '';
     try {
       const files = (await readdir(this.settings.logDir)).filter((f) => f.startsWith('Log_') && f.endsWith('.txt'));
-      const all: SpawnEvent[] = [];
+      const adminEvents: SpawnEvent[] = [];
       const dels: DeleteEvent[] = [];
       for (const file of files) {
         const text = await readFile(path.join(this.settings.logDir, file), 'utf8');
         const parsed = parseLogFile(file, text, this.settings.utcOffsetHours);
-        all.push(...parsed.spawns);
+        adminEvents.push(...parsed.spawns);
         dels.push(...parsed.deletes);
       }
+      const player = await this.loadPlayerEvents();
+      const all = [...adminEvents, ...player.events];
       all.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
       dels.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
       this.events = all;
       this.deletes = dels;
       const groups = await this.readGroups();
-      this.admins = mergeAdmins(all, this.seededAdmins, groups);
+      // только админские события — игроков ModernLogger в ростер не тащим
+      this.admins = collectAdmins(adminEvents, this.seededAdmins, groups);
+      this.players = collectPlayers(player.events, new Set(this.admins.map((a) => a.steamId)));
       await writeFile(path.join(DATA, 'admins.json'), JSON.stringify(this.admins, null, 2), 'utf8');
       this.seededAdmins = this.admins;
-      return { ok: true, files: files.length, events: all.length, admins: this.admins.length };
+      return {
+        ok: true,
+        files: files.length + player.files,
+        events: all.length,
+        admins: this.admins.length,
+      };
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       this.events = [];
@@ -159,19 +208,34 @@ export class Store {
       ),
       this.deletes,
     );
+    const audience: Audience = query.audience || 'both';
+    if (audience !== 'both') {
+      const ids = new Set(this.admins.map((a) => a.steamId));
+      list =
+        audience === 'admins'
+          ? list.filter((e) => ids.has(e.steamId))
+          : list.filter((e) => !ids.has(e.steamId));
+    }
     list = searchEvents(list, query.q || '');
     if (query.forbiddenOnly) list = list.filter((e) => e.forbidden);
     if (query.collapse) list = collapseBursts(list);
-    return list;
+    return [...list].sort((a, b) => b.at.localeCompare(a.at));
   }
 
   query(query: Query) {
     const events = this.filtered(query);
-    const cap = 2500;
+    const allowed = new Set([100, 200, 300]);
+    const pageSize = allowed.has(query.pageSize || 0) ? (query.pageSize as number) : 100;
+    const pages = Math.max(1, Math.ceil(events.length / pageSize));
+    const page = Math.min(Math.max(1, query.page || 1), pages);
+    const start = (page - 1) * pageSize;
     return {
-      events: events.slice(0, cap),
+      events: events.slice(start, start + pageSize),
       total: events.length,
-      truncated: events.length > cap,
+      page,
+      pageSize,
+      pages,
+      truncated: false,
       error: this.lastError,
       range: { from: query.from || daysAgo(30), to: query.to || today() },
     };
@@ -192,7 +256,9 @@ export class Store {
       generatedAt: new Date().toISOString(),
       utcOffsetHours: this.settings.utcOffsetHours,
       logDir: this.settings.logDir,
+      playerLogDir: this.settings.playerLogDir || '',
       admins: this.admins,
+      players: this.players,
       catalog: this.catalog,
       extraForbidden: this.extraForbidden,
       events: this.events,

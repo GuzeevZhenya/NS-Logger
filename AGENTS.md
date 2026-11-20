@@ -24,8 +24,9 @@
 - `src/parser` — строки `Log_*.txt` → события спавна (+3ч, переход через полночь)
 - `src/server` — индекс в памяти, фильтры, экспорт
 - `src/web` — диапазон дат, Все/админ, таблица, запрет
-- `data/settings.json` — путь к `Logging`, смещение времени
-- `data/admins.json` — ник + SteamID из текущих логов
+- `data/settings.json` — путь к `Logging`, `playerLogDir` (ModernLogger `Day_*`), смещение времени
+- `data/admins.json` — ник + SteamID тех, кто спавнил, тп, менял статы, удалял, фрикам
+- снимок: отдельно `admins` и `players`; в UI переключатель Админы / Игроки / Все
 - `data/forbidden-extra.json` — ручной доп. запрет
 - Секреты VPP (`Permissions/credentials.txt`) не читать
 

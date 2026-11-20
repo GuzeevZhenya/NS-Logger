@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { LogCategory, SpawnKind } from '../parser/index.js';
+import type { Audience, LogCategory, SpawnKind } from '../parser/index.js';
 import { Store } from './store.js';
 
 function parseCategories(raw: string | undefined): LogCategory[] | undefined {
@@ -10,6 +10,11 @@ function parseCategories(raw: string | undefined): LogCategory[] | undefined {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean) as LogCategory[];
+}
+
+function parseAudience(raw: string | undefined): Audience | undefined {
+  if (raw === 'admins' || raw === 'players' || raw === 'both') return raw;
+  return undefined;
 }
 
 const store = new Store();
@@ -40,6 +45,8 @@ app.post('/api/catalog/refresh', async (c) => {
 
 app.get('/api/admins', (c) => c.json(store.admins));
 
+app.get('/api/players', (c) => c.json(store.players));
+
 app.get('/api/snapshot', (c) => c.json(store.toSnapshot()));
 
 app.get('/api/events', (c) => {
@@ -53,6 +60,9 @@ app.get('/api/events', (c) => {
     forbiddenOnly: query.forbiddenOnly === '1',
     collapse: query.collapse !== '0',
     categories: parseCategories(query.categories),
+    audience: parseAudience(query.audience),
+    page: query.page ? Number(query.page) : 1,
+    pageSize: query.pageSize ? Number(query.pageSize) : 50,
   });
   return c.json(payload);
 });
@@ -69,6 +79,7 @@ app.get('/api/stats', (c) => {
       forbiddenOnly: query.forbiddenOnly === '1',
       collapse: false,
       categories: parseCategories(query.categories),
+      audience: parseAudience(query.audience),
     }),
   );
 });
@@ -84,6 +95,7 @@ app.get('/api/export', (c) => {
     forbiddenOnly: query.forbiddenOnly === '1',
     collapse: query.collapse !== '0',
     categories: parseCategories(query.categories),
+    audience: parseAudience(query.audience),
   });
   return c.body(text, 200, {
     'Content-Type': 'text/plain; charset=utf-8',

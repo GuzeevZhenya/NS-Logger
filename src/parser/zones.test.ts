@@ -55,4 +55,12 @@ describe('zones', () => {
     expect(outside?.zoneLabel).toMatch(/точка не зарегистрирована/);
     expect(outside?.nearest).toBeTruthy();
   });
+
+  it('resolves space-separated player coords to a named place', () => {
+    const freedom = describeTeleportPos('7713 117 4943');
+    expect(freedom?.zoneName).toBe('База свободы');
+
+    const dumpish = describeTeleportPos('5200 150 4500');
+    expect(dumpish?.zoneName).toBe('Свалка');
+  });
 });

@@ -1,4 +1,4 @@
-import type { AdminRecord, EnrichedEvent, LogCategory, Settings, SpawnKind } from '../parser/types';
+import type { AdminRecord, Audience, EnrichedEvent, LogCategory, Settings, SpawnKind } from '../parser/types';
 import type { Stats } from '../parser/enrich';
 
 export type Filters = {
@@ -11,6 +11,9 @@ export type Filters = {
   collapse: boolean;
   /** Пустой массив = ничего не показывать; undefined в API = все (legacy) */
   categories: LogCategory[];
+  audience?: Audience;
+  page?: number;
+  pageSize?: 100 | 200 | 300;
 };
 
 export type EventsResponse = {
@@ -32,6 +35,7 @@ function qs(filters: Filters): string {
   });
   if (filters.forbiddenOnly) p.set('forbiddenOnly', '1');
   p.set('collapse', filters.collapse ? '1' : '0');
+  if (filters.audience && filters.audience !== 'both') p.set('audience', filters.audience);
   return p.toString();
 }
 

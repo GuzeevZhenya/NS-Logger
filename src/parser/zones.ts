@@ -260,13 +260,25 @@ export function distanceToZone(px: number, pz: number, zone: ZoneDef): number {
   return best;
 }
 
+function polygonArea(ring: Array<{ x: number; z: number }>): number {
+  let s = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    s += a.x * b.z - b.x * a.z;
+  }
+  return Math.abs(s) / 2;
+}
+
 export function resolveZone(x: number, z: number, zones: ZoneDef[] = MAP_ZONES): ZoneHit {
+  const inside: Array<{ name: string; area: number }> = [];
   let nearestName = zones[0]?.name ?? '';
   let nearestDist = Infinity;
   for (const zone of zones) {
     const ring = orderedRing(zone.corners);
     if (pointInPolygon(x, z, ring)) {
-      return { inside: true, name: zone.name, distance: 0 };
+      inside.push({ name: zone.name, area: polygonArea(ring) });
+      continue;
     }
     const d = distanceToZone(x, z, zone);
     if (d < nearestDist) {
@@ -274,13 +286,17 @@ export function resolveZone(x: number, z: number, zones: ZoneDef[] = MAP_ZONES):
       nearestName = zone.name;
     }
   }
+  if (inside.length) {
+    inside.sort((a, b) => a.area - b.area);
+    return { inside: true, name: inside[0].name, distance: 0 };
+  }
   return { inside: false, name: null, nearest: nearestName, distance: nearestDist };
 }
 
 /** Достаёт X/Y/Z из строки вида `8525.95, 133.57, 7248.58` или `pos=<...>`. */
 export function parsePos(raw: string): Vec3 | null {
   const m = raw.match(
-    /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/,
+    /(-?\d+(?:\.\d+)?)(?:\s*,\s*|\s+)(-?\d+(?:\.\d+)?)(?:\s*,\s*|\s+)(-?\d+(?:\.\d+)?)/,
   );
   if (!m) return null;
   return { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) };

@@ -70,12 +70,52 @@ a {
   font-size: 14px;
 }
 
+.audience {
+  display: flex;
+  gap: 4px;
+}
+
+.audience button {
+  flex: 1;
+  background: #1c1712;
+  color: #cbb89a;
+  border: 1px solid #4a4033;
+  padding: 7px 4px;
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.audience button.is-on {
+  color: #fff4dc;
+  border-color: var(--iodine);
+  box-shadow: inset 0 -2px 0 var(--iodine);
+  background: #3a2818;
+}
+
+.admin-search {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b9a888;
+}
+
+.admin-search input {
+  width: 100%;
+}
+
 .admins {
   display: flex;
   flex-direction: column;
   gap: 4px;
   overflow: auto;
   padding-right: 4px;
+  flex: 1;
+  min-height: 0;
 }
 
 .callsign {
@@ -97,6 +137,32 @@ a {
   display: block;
   color: var(--ghost);
   font-size: 11px;
+}
+
+.callsign small.steam {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.callsign small.role-admin,
+.callsign small.role-player {
+  display: inline;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid #5a4d3c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.callsign small.role-admin {
+  color: var(--iodine);
+  border-color: var(--iodine);
+}
+
+.callsign small.role-player {
+  color: #9c8b72;
 }
 
 .callsign b {
@@ -236,12 +302,40 @@ a {
   cursor: pointer;
 }
 
+.file-btn.is-folder {
+  background: #3a3126;
+  border: 1px solid #6a5840;
+}
+
 .toolbar,
-.path {
+.path,
+.pager {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: end;
+}
+
+.pager {
+  align-items: center;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #cbb896;
+}
+
+.pager label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b9a888;
+}
+
+.pager .ghost-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .toolbar label,
